@@ -311,7 +311,7 @@ class CCA_PKE_Parameters:
         tmp += '| {:60s} | {:^10s} | {:<20.5f} |\n'.format('Ciphertext size (B)', '|ct|', self.ct_bitsize / 2 ** 3.)
         return tmp
 
-class ZKP_AUTO_Parameters:
+class ZKP_Parameters:
     """
     Main class containing all the parameters for the 
     final zero-knowledge proof system (Prove, Verify). 
@@ -609,9 +609,9 @@ class ZKP_AUTO_Parameters:
     
     def __repr__(self):
         """
-        Printing a Show_ZKP_Parameters object
+        Printing a ZKP_Parameters object
         """
-        tmp = '\n[+] SHOW ZERO-KNOWLEDGE PROOF PARAMETERS\n'
+        tmp = '\n[+] ZERO-KNOWLEDGE PROOF PARAMETERS\n'
         tmp += 110 * '=' + '\n'
         tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Soundness security parameter', 'λ_snd', self.snd_sec)
         tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Zero-Knowledge security parameter', 'λ_zk', self.zk_sec)
@@ -815,10 +815,10 @@ CCA_version      = False
 if CCA_version:
     samp_pms = NTRUSampler_Parameters(target_bitsec=128, n=1024, n_pi=64, b_H=13, k_H=2, q_L=733, N_min=2**32)
     pke_pms = CCA_PKE_Parameters(target_bitsec=128, n_op=256, d=3)
-    zkp_pms = ZKP_AUTO_Parameters(snd_sec=128, zk_sec=161, n_pi=64, samp=samp_pms, pke=pke_pms, CCA=CCA_version)
+    zkp_pms = ZKP_Parameters(snd_sec=128, zk_sec=161, n_pi=64, samp=samp_pms, pke=pke_pms, CCA=CCA_version)
 else:
     samp_pms = NTRUSampler_Parameters(target_bitsec=128, n=1024, n_pi=64, b_H=13, k_H=2, q_L=733, N_min=2**32)
     pke_pms = CPA_PKE_Parameters(target_bitsec=128, n_op=256, d=3)
-    zkp_pms = ZKP_AUTO_Parameters(snd_sec=128, zk_sec=161, n_pi=64, samp=samp_pms, pke=pke_pms, CCA=CCA_version)
+    zkp_pms = ZKP_Parameters(snd_sec=128, zk_sec=161, n_pi=64, samp=samp_pms, pke=pke_pms, CCA=CCA_version)
 
 estimate_group_signature(samp_pms, pke_pms, zkp_pms, no_guessing=True, CCA=CCA_version)
