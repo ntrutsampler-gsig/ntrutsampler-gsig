@@ -29,18 +29,6 @@ def c_star(dim:int, sec:float):
     f = lambda c: sec + dim * (log2(c * sqrt(2*pi)) + (1/2 - pi*c**2)*log2(e))
     return root(f, 1)['x'][0]
 
-def t_star(dim:int, sec:float):
-    """
-    Find the Gaussian tailcut rate t so that the upper bound t*s in
-    Infinity norm is verified with probability at least 1 - 2^(-sec)
-    - input:
-        (int)   dim     -- Dimension
-        (int)   sec     -- Security parameter
-    - output:
-        (flt)   t_star  -- Tailcut rate
-    """
-    return sqrt((sec + 1 + log2(dim)) / (pi * log2(e)))
-
 def centered_mod(a:int, q:int):
     r = a % q
     return (r if r <= (q-1)/2 else r - q)
@@ -157,7 +145,7 @@ class NTRUSampler_Parameters:
         tmp += '[+] Group Signature Detailed Estimated Performance (KB)\n'
         tmp += 105 * '=' + '\n'
         tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Issuer public key size (B)', '|ipk|', self.ipk_bitsize / 2 ** 3.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Issuer secret key size (B)', '|gmsk|', self.isk_bitsize / 2 ** 3.)
+        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Issuer secret key size (B)', '|isk|', self.isk_bitsize / 2 ** 3.)
         tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Identity size (B)', '|id|', self.id_bitsize / 2 ** 3.)
         tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('v_1 size (B)', '|v_1|', self.v1_bitsize / 2 ** 3.)
         tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('v_2, v_3 size (B)', '|v_2,v_3|', self.v2_v3_bitsize / 2 ** 3.)
@@ -321,83 +309,48 @@ class CCA_PKE_Parameters:
         tmp += '| {:60s} | {:^10s} | {:<20.5f} |\n'.format('Public key size (B)', '|opk|', self.opk_bitsize / 2 ** 3.)
         tmp += '| {:60s} | {:^10s} | {:<20.5f} |\n'.format('Secret key size (B)', '|osk|', self.osk_bitsize / 2 ** 3.)
         tmp += '| {:60s} | {:^10s} | {:<20.5f} |\n'.format('Ciphertext size (B)', '|ct|', self.ct_bitsize / 2 ** 3.)
-        return tmp     
+        return tmp
 
-class ZKP_Parameters:
+class ZKP_AUTO_Parameters:
     """
     Main class containing all the parameters for the 
-    zero-knowledge proof system for the group signature. 
+    final zero-knowledge proof system (Prove, Verify). 
     """
 
-    def __init__(self, target_bitsec:int, n_pi:int, d_pi:int, m_2:int, q_start:int, gamma:int, D:int, samp, pke, bimodal=True, compression=True, garbage=True, CCA=False, infARP=False):
+    def __init__(self, snd_sec:int, zk_sec:int, n_pi:int, samp, pke, CCA=True):
         """
         Computing all the zero-knowledge argument parameters
         - input:
-            (int)   target_bitsec   -- Target bit security or security parameter
-            (int)   n               -- Ring degree
-            (int)   d               -- Module rank
-            (int)   m_2             -- Commitment randomness dimension
-            (int)   q_1_start       -- Starting search modulus (q_1 largest adequately splitted prime below q_1_start)
-            (int)   gamma           -- Compression parameter for commitment w
-            (int)   D               -- Compression parameter for commitment t_A
-            (NTRUSampler_Parameters) samp -- TSampler parameters
-            (PKE_Parameters) pke    -- Encryption parameters
+            (int)   snd_sec                 -- Target bit security for soundness
+            (int)   zk_sec                  -- Target bit security for zero-knowledge
+            (int)   n_pi                    -- Ring degree
+            (NTRU_TSampler_Parameters) samp -- Sampler parameters
+            (*_PKE_Parameters) pke          -- Public key encryption parameters
         """
         ### Parameters
-        self.infARP = infARP
-
         # Security parameter
-        self.sec = target_bitsec
+        self.sec = snd_sec
+        self.snd_sec = snd_sec
+        self.zk_sec = zk_sec
 
         # Degree of the ring R'' = Z[X]/<X^n' + 1>
         self.n_pi = n_pi
 
-        # M-SIS module rank 
-        self.d_pi = d_pi
-
-        # # Number of splitting factors for modulus (hardcoded)
-        self.kappa = 2
-
-        if compression:
-            # Finding the largest prime modulus splitting in kappa factors below q_start and such that a divisor of q-1 is close to gamma
-            found_q_gamma = False
-            q_pi = q_start + 1
-            while not(found_q_gamma):
-                q_pi = prevprime(q_pi)
-                while q_pi % 8 != 5:
-                    q_pi = prevprime(q_pi)
-                divs = divisors(q_pi-1)
-                for div in divs:
-                    if (gamma <= div <= 5*gamma/4) and (div % 2 == 0): # find even divisor closest to gamma (not larger than 5.gamma/4)
-                        self.gamma = div
-                        found_q_gamma = True 
-                        break
-            # Commitment compression
-            self.D = D 
-        else:
-            self.gamma = 0
-            self.D = 0
-            q_pi = prevprime(q_start + 1)
-            while (q_pi%(4*self.kappa) != 2*self.kappa + 1) or (q_pi < (2*sqrt(self.kappa)) ** self.kappa):
-                q_pi = prevprime(q_pi)
-        self.q_pi = q_pi
-        self.q_min = q_pi
-
-        if garbage:
-            # Repetition for soundness amplification
-            l = ceil(self.sec / log2(self.q_min))
-            self.l = ceil(l/2)
-        else:
-            self.l = ceil(self.sec / log2(self.q_min))
-
         # Infinity norm bound on the challenges
-        self.rho = ceil(1/2 * (2 ** (2*(self.sec + 1)/self.n_pi) - 1))
+        self.rho = ceil(1/2 * (2 ** (2*(self.snd_sec + 1)/self.n_pi) - 1))
 
         # Manhattan-like norm bound on the challenges (hardcoded)
         self.eta = {64:93, 128:42, 256:37, 512:57, 1024:84}[self.n_pi]
 
         # Size of challenge space
         self.challenge_space_size = (2 * self.rho + 1) ** (self.n_pi // 2) / 2
+
+        # Commitment randomness dimension and infinity norm bound (hardcoded)
+        self.xi_s2 = 1
+
+        ####################################
+        # Witness and Relation Definitions #
+        ####################################
 
         # Subring gap
         self.k_pi = samp.n // self.n_pi
@@ -407,8 +360,7 @@ class ZKP_Parameters:
         if CCA:
             self.m_11 = (2 * pke.d) * self.k_op_pi + 1  # s,e (+ one element for four-square norm proof)
             self.m_11 += 1                              # id 
-            if bimodal:
-                self.m_11 += 1                          # bimodal bit
+            self.m_11 += 1                              # bimodal bit
             
             self.m_12 = (2 + samp.k_H) * self.k_pi + 1  # v (+ one element for four-square norm proof)
             self.m_12 += self.k_op_pi + 1               # e1 (+ one element for four-square norm proof)
@@ -416,23 +368,18 @@ class ZKP_Parameters:
         else:
             self.m_11 = (2 * pke.d) * self.k_op_pi + 1  # s,e (+ one element for four-square norm proof)
             self.m_11 += 1                              # tag 
-            if bimodal:
-                self.m_11 += 1                          # bimodal bit
+            self.m_11 += 1                              # bimodal bit
             self.m_11 += self.k_op_pi + 1               # e1 (+ one element for four-square norm proof)
 
             self.m_12 = (2 + samp.k_H) * self.k_pi + 1  # v (+ one element for four-square norm proof)
         self.m_1 = self.m_11 + self.m_12
 
-        # Commitment randomness dimension and infinity norm bound (hardcoded)
-        self.m_2 = m_2
-        self.xi_s2 = 1
-
-        # Bounds on Euclidean norm of the witness
+        # Bounds on Euclidean norm of the subwitnesses
         if CCA:
-            self.bound_witness_1 = sqrt(pke.B_se_s + samp.w + (1 if bimodal else 0))
+            self.bound_witness_1 = sqrt(pke.B_se_s + samp.w + 1)
             self.bound_witness_2 = sqrt(samp.B_s + 2*pke.B_e1_s)
         else:
-            self.bound_witness_1 = sqrt(pke.B_se_s + samp.w + (1 if bimodal else 0) + pke.B_e1_s)
+            self.bound_witness_1 = sqrt(pke.B_se_s + samp.w + 1 + pke.B_e1_s)
             self.bound_witness_2 = samp.B
         self.bound_witness = sqrt(self.bound_witness_1**2 + self.bound_witness_2**2)
 
@@ -459,117 +406,191 @@ class ZKP_Parameters:
                             pke.p/2 * sqrt(pke.n_op)
                         )
 
+        ########################################
+        # END Witness and Relation Definitions #
+        ########################################
+
         # Rejection sampling parameters (hardcoded)
         self.M_11 = sqrt(2)
         self.M_12 = sqrt(2)
         self.M_2 = sqrt(2)
-        self.M_3_l2 = sqrt(2)
-        self.M_3_linf = sqrt(2)
-        if bimodal:
-            self.eps_11 = 0
-            self.eps_12 = 0
-            self.eps_2 = 0
-            self.eps_3_l2 = 0
-            self.eps_3_linf = 0
-            self.alpha_11 = sqrt(pi/log(self.M_11))
-            self.alpha_12 = sqrt(pi/log(self.M_12))
-            self.alpha_2 = sqrt(pi/log(self.M_2))
-            self.alpha_3_l2 = sqrt(pi/log(self.M_3_l2))
-            self.alpha_3_linf = sqrt(pi/log(self.M_3_linf))
-        else:
-            self.eps_11 = 2**(-130)
-            self.eps_12 = 2**(-130)
-            self.eps_2 = 2**(-130)
-            self.eps_3_l2 = 2**(-130)
-            self.eps_3_linf = 2**(-130)
-            self.alpha_11 = sqrt(pi)/log(self.M_11) * (sqrt(log(1/self.eps_11) + log(self.M_11)) + sqrt(log(1/self.eps_11)))
-            self.alpha_12 = sqrt(pi)/log(self.M_12) * (sqrt(log(1/self.eps_12) + log(self.M_12)) + sqrt(log(1/self.eps_12)))
-            self.alpha_2 = sqrt(pi)/log(self.M_2) * (sqrt(log(1/self.eps_2) + log(self.M_2)) + sqrt(log(1/self.eps_2)))
-            self.alpha_3_l2 = sqrt(pi)/log(self.M_3_l2) * (sqrt(log(1/self.eps_3_l2) + log(self.M_3_l2)) + sqrt(log(1/self.eps_3_l2)))
-            self.alpha_3_linf = sqrt(pi)/log(self.M_3_linf) * (sqrt(log(1/self.eps_3_linf) + log(self.M_3_linf)) + sqrt(log(1/self.eps_3_linf)))
+        self.M_3 = sqrt(2)
+        self.alpha_11 = sqrt(pi/log(self.M_11))
+        self.alpha_12 = sqrt(pi/log(self.M_12))
+        self.alpha_2 = sqrt(pi/log(self.M_2))
+        self.alpha_3 = sqrt(pi/log(self.M_3))
+        self.eps_11 = 0
+        self.eps_12 = 0
+        self.eps_2 = 0
+        self.eps_3 = 0
 
-        # Gaussian width
+        # Gaussian widths
         self.s_11 = self.alpha_11 * self.eta * self.bound_witness_1
         self.s_12 = self.alpha_12 * self.eta * self.bound_witness_2
-        self.s_2 = self.alpha_2 * self.eta * self.xi_s2 * sqrt(self.n_pi * self.m_2)
-        if infARP:
-            self.s_3_l2 = self.alpha_3_l2 * sqrt(337) * sqrt(self.bound_witness**2)
-            self.s_3_linf = self.alpha_3_linf * sqrt(337) * sqrt(self.B_j**2 + self.B_j_0**2 + (2 if CCA else 1) * self.B_j_1**2)
-        else:
-            self.s_3_l2 = self.alpha_3_l2 * sqrt(337) * sqrt(self.bound_witness**2 + self.B_j**2 + self.B_j_0**2 + (2 if CCA else 1) * self.B_j_1**2)
-            self.s_3_linf = 1
+        self.s_3 = self.alpha_3 * sqrt(337) * sqrt(self.bound_witness**2 + self.B_j**2 + self.B_j_0**2 + (2 if CCA else 1) * self.B_j_1**2)
 
         # Checking approximate range proofs bounds
-        self.B_z3_l2 = sqrt(floor(c_star(256, self.sec + 3) ** 2 * self.s_3_l2 ** 2 * 256))
-        self.B_z3_linf = ceil(t_star(256, self.sec + 3) * self.s_3_linf)
+        B_z3 = sqrt(floor(c_star(256, self.snd_sec + 3) ** 2 * self.s_3 ** 2 * 256))
 
-        self.B_arp_l2 = self.B_z3_l2 * 2/sqrt(26)
-        self.B_arp_linf = self.B_z3_linf * 2
+        self.B_arp = B_z3 * 2/sqrt(26)
 
-        self.cond_1_bound = max(samp.B_s, pke.B_se_s, pke.B_e1_s, samp.w) # Lower bound -q < -B^2
-        self.cond_2_bound = self.B_arp_l2**2 - min(samp.B_s, pke.B_se_s, pke.B_e1_s, samp.w) # Upper bound (2/root(26) * B_e)^2 - B^2 < q
-        self.cond_3_bound = 41 * self.n_pi * (self.m_11 + self.m_12 + (0 if infARP else self.k_pi + self.k_op_pi*(pke.d + (2 if CCA else 1)))) * self.B_arp_l2 # Condition for modular JL bound for ARP bound
-        self.cond_4_bound = samp.w + sqrt(samp.w*self.n_pi) # bound for proving tag binary
+        ######################
+        # Modulus Conditions #
+        ######################
+        self.modulus_conditions = {}
 
+        self.modulus_conditions["Exact l2"] = []
+        # Exact l2 proof lower bounds (-q_pi < -B²)
+        self.modulus_conditions["Exact l2"].append(samp.B_s)
+        self.modulus_conditions["Exact l2"].append(pke.B_se_s)
+        self.modulus_conditions["Exact l2"].append(pke.B_e1_s)
+        self.modulus_conditions["Exact l2"].append(samp.w)
+        # Exact l2 proof upper bounds (q_pi > B_{arp,2}² - B²)
+        self.modulus_conditions["Exact l2"].append(self.B_arp**2 - samp.B_s)
+        self.modulus_conditions["Exact l2"].append(self.B_arp**2 - pke.B_se_s)
+        self.modulus_conditions["Exact l2"].append(self.B_arp**2 - pke.B_e1_s)
+        self.modulus_conditions["Exact l2"].append(self.B_arp**2 - samp.w)
+
+
+        self.modulus_conditions["Modular JL"] = []
+        # Modular Jonhson-Lindenstrauss projection condition
+        self.modulus_conditions["Modular JL"].append(41 * self.n_pi * (self.m_1 + self.k_pi + self.k_op_pi*(pke.d + (2 if CCA else 1))) * self.B_arp)
+
+
+        self.modulus_conditions["Binary"] = []
+        # Proof of binary tag
+        self.modulus_conditions["Binary"].append(samp.w + sqrt(samp.w*self.n_pi))
+
+
+        self.modulus_conditions["Lifting"] = []
         # Bound on INFINITY norm of extracted lifting equation [1 | -h^T | a3]v* + qL.id*.gH^T.v2* - u - q.j* = 0 mod q_proof
-        self.cond_j_bound   = sqrt(1 + samp.q**2/4 * samp.n * (1+samp.k_H)) * samp.B + \
+        self.modulus_conditions["Lifting"].append(sqrt(1 + samp.q**2/4 * samp.n * (1+samp.k_H)) * samp.B + \
                                 sqrt(samp.w) * samp.q_L * sqrt((samp.q_H**2 - 1)/(samp.b_H**2 - 1)) * samp.B + \
                                 samp.q/2 + \
-                                samp.q * (self.B_arp_linf if infARP else self.B_arp_l2)
-
+                                samp.q * self.B_arp)
         # Bound on INFINITY norm of extracted lifting equation e* + A.s* - ct0 - p.j_0* = 0 mod q_proof
-        self.cond_j_0_bound = sqrt(1 + (pke.p/2)**2 * pke.n_op*pke.d) * pke.B_se + \
+        self.modulus_conditions["Lifting"].append(sqrt(1 + (pke.p/2)**2 * pke.n_op*pke.d) * pke.B_se + \
                             pke.p / 2 + \
-                            pke.p * (self.B_arp_linf if infARP else self.B_arp_l2)
-
+                            pke.p * self.B_arp)
         # Bound on INFINITY norm of extracted lifting equation b_op1.s + e1 + round(p/2).t - ct1 - p.j_1* = 0 mod q_proof
         # and on extracted lifting equation b_op2.s + e2 + round(p/2).t - ct2 - p.j_2* = 0 mod q_proof
-        self.cond_j_1_bound = pke.p/2 * sqrt(pke.n_op*pke.d) * pke.B_se + \
+        self.modulus_conditions["Lifting"].append(pke.p/2 * sqrt(pke.n_op*pke.d) * pke.B_se + \
                             pke.B_e1 + \
                             round(pke.p/2) + \
                             pke.p/2 + \
-                            pke.p * (self.B_arp_linf if infARP else self.B_arp_l2)
+                            pke.p * self.B_arp)
 
-        assert (self.q_pi > self.cond_1_bound), "ZKP modulus too small"
-        assert (self.q_pi > self.cond_2_bound), "ZKP modulus too small"
-        assert (self.q_pi > self.cond_3_bound), "ZKP modulus too small"
-        assert (self.q_pi > self.cond_4_bound), "ZKP modulus too small"
-        assert (self.q_pi > self.cond_j_bound), "ZKP modulus too small"
-        assert (self.q_pi > self.cond_j_0_bound), "ZKP modulus too small"
-        assert (self.q_pi > self.cond_j_1_bound), "ZKP modulus too small"
+        ##########################
+        # END Modulus Conditions #
+        ##########################
 
-        # Square Verification bounds
-        self.B_11_s = 4 * floor(c_star(self.m_11 * self.n_pi, self.sec + 3) ** 2 * self.s_11 ** 2 * (self.m_11 * self.n_pi))
-        self.B_12_s = 4 * floor(c_star(self.m_12 * self.n_pi, self.sec + 3) ** 2 * self.s_12 ** 2 * (self.m_12 * self.n_pi))
-        self.B_1_s = self.B_11_s + self.B_12_s
-        if self.D != 0 and self.gamma != 0:
-            self.B_2_s = floor((2 * sqrt(floor(c_star(self.m_2 * self.n_pi, self.sec + 3) ** 2 * self.s_2 ** 2 * (self.m_2 * self.n_pi))) + (2**self.D * self.eta + self.gamma)*sqrt(self.n_pi*self.d_pi)) ** 2)
-        else:
-            self.B_2_s = 4 * floor(c_star(self.m_2 * self.n_pi, self.sec + 3) ** 2 * self.s_2 ** 2 * (self.m_2 * self.n_pi))
+        # Candidate modulus exceeds all the modulus conditions
+        q_start = ceil(max(sum(self.modulus_conditions.values(), [])))
 
-        # M-SIS bound
+        # FIND STARTING PARAMETERS FOR M-SIS and M-LWE HARDNESS
+        found_m2_d = False
+        m_2 = 40
+        d_pi = 25 
+        l = ceil(ceil(self.snd_sec / log2(q_start)) / 2)
+        while not(found_m2_d):
+            # Finding smallest candidate rank for M-LWE
+            print("[+] Finding smallest candidate rank for M-LWE")
+            found_m2 = False
+            while not(found_m2):
+                mlwe = estimate_LWE(n=self.n_pi*(m_2 - (d_pi + floor(256/self.n_pi) + l + 1)), q=q_start, Xs=ND.CenteredBinomial(self.xi_s2), Xe=ND.CenteredBinomial(self.xi_s2), m=self.n_pi*m_2, cost_model=COST_MODEL, rough=True)
+                if mlwe[-2] >= self.zk_sec:
+                    found_m2 = True 
+                    break
+                m_2 += 1
+            print("\t[o] Found: m_2 = %d [sec = %.3f]" % (m_2, mlwe[-2]))
+
+            # Finding smallest candidate rank for M-SIS
+            print("[+] Finding smallest candidate rank for M-SIS")
+            self.B_11_s = 4 * floor(c_star(self.m_11 * self.n_pi, self.sec + 3) ** 2 * self.s_11 ** 2 * (self.m_11 * self.n_pi))
+            self.B_12_s = 4 * floor(c_star(self.m_12 * self.n_pi, self.sec + 3) ** 2 * self.s_12 ** 2 * (self.m_12 * self.n_pi))
+            self.B_1_s = self.B_11_s + self.B_12_s
+            s_2 = self.alpha_2 * self.eta * self.xi_s2 * sqrt(self.n_pi * m_2)
+            B_2_s = 4 * floor(c_star(m_2 * self.n_pi, self.snd_sec + 3) ** 2 * s_2 ** 2 * (m_2 * self.n_pi))
+            beta = 4 * self.eta * sqrt(self.B_1_s + B_2_s)
+            found_d = False
+            while not(found_d):
+                msis = estimate_SIS(n=self.n_pi*d_pi, m=self.n_pi*(self.m_1 + m_2), q=q_start, beta=beta, cost_model=COST_MODEL, estimator=False, rough=True)
+                if msis[-2] < self.snd_sec + 1:
+                    found_d = True
+                    d_pi = d_pi + 1
+                    break
+                d_pi -= 1
+            print("\t[o] Found: d = %d [sec with d-1 = %.3f]" % (d_pi, msis[-2]))
+
+            print("[+] Checking if overshot M-LWE hardness")
+            mlwe = estimate_LWE(n=self.n_pi*(m_2 - (d_pi + floor(256/self.n_pi) + l + 1)), q=q_start, Xs=ND.CenteredBinomial(self.xi_s2), Xe=ND.CenteredBinomial(self.xi_s2), m=self.n_pi*m_2, cost_model=COST_MODEL, rough=True)
+            found_m2_d = (mlwe[-2] <= self.zk_sec + 10)
+            if not(found_m2_d):
+                m_2 = 40 # resetting search M-LWE rank as M-LWE hardness is too high
+
+        # Setting final values of m_2, d_pi, s_2
+        self.m_2 = m_2 
+        self.d_pi = d_pi
+        self.s_2 = self.alpha_2 * self.eta * self.xi_s2 * sqrt(self.n_pi * self.m_2)
+
+        # FIND COMPRESSION PARAMETERS
+        print("[+] Finding compression parameters")
+        found_q_gamma_D = False
+        # Starting with very high compression parameter and reducing until sufficient M-SIS security
+        gamma_start = 2**(min(63, ceil(log2(q_start)) - 3))
+        while not(found_q_gamma_D):
+            q = q_start # this in first round ensures q > modulus_conditions
+            found_q_gamma = False
+            while not(found_q_gamma): 
+                q = nextprime(q)
+                while q % 8 != 5:
+                    q = nextprime(q)
+                divs = divisors(q-1)
+                for div in divs:
+                    if (gamma_start <= div <= 5*gamma_start/4) and (div % 2 == 0): # find even divisor closest to gamma (not larger than 5.gamma/4)
+                        gamma = div
+                        found_q_gamma = True
+                        break
+            B_2_s = floor((2 * sqrt(floor(c_star(self.m_2 * self.n_pi, self.snd_sec + 3) ** 2 * self.s_2 ** 2 * (self.m_2 * self.n_pi))) + gamma*sqrt(self.n_pi*self.d_pi)) ** 2)
+            beta = 4 * self.eta * sqrt(self.B_1_s + B_2_s)
+            msis = estimate_SIS(n=self.n_pi*self.d_pi, m=self.n_pi*(self.m_1 + self.m_2), q=q, beta=beta, cost_model=COST_MODEL, estimator=False, rough=True)
+            print("[+] Testing with gamma = %d [sec = %.3f]" % (gamma, msis[-2]))
+            if msis[-2] >= self.snd_sec:
+                found_q_gamma_D = True
+            else:
+                gamma_start = gamma_start // 2
+        # Setting final values of compression parameters and M-SIS bounds
+        self.gamma = gamma 
+        self.D = max(0, floor(log2(gamma)) - floor(log2(self.rho*self.n_pi)) + 1)
+        self.B_2_s = self.B_2_s = floor((2 * sqrt(floor(c_star(self.m_2 * self.n_pi, self.sec + 3) ** 2 * self.s_2 ** 2 * (self.m_2 * self.n_pi))) + (2**self.D * self.eta + self.gamma)*sqrt(self.n_pi*self.d_pi)) ** 2)
         self.msis_beta = 4 * self.eta * sqrt(self.B_1_s + self.B_2_s)
+        
+        # Setting final values of q and soundness amplification term
+        self.q_pi = q
+        self.q_min = q 
+        self.l = ceil(ceil(self.sec / log2(self.q_min)) / 2)
 
-        ### Security
-        self.pre_soundness_error = self.q_min ** (-self.n_pi/2) + 2 / self.challenge_space_size 
-        if garbage:
-            self.pre_soundness_error += self.q_min ** (-2*self.l)
-        else:
-            self.pre_soundness_error += self.q_min ** (-self.l)
+        # FINAL ASSESSMENT of M-SIS and M-LWE HARDNESS
+        print("[o] Assessing Final M-LWE Hardness")
+        self.mlwe = estimate_LWE(n=self.n_pi*(self.m_2 - (self.d_pi + floor(256/self.n_pi) + self.l + 1)), q=self.q_pi, Xs=ND.CenteredBinomial(self.xi_s2), Xe=ND.CenteredBinomial(self.xi_s2), m=self.n_pi*self.m_2, cost_model=COST_MODEL, rough=ROUGH)
+
+        print("[o] Assessing Final M-SIS Hardness")
+        self.msis = estimate_SIS(n=self.n_pi*self.d_pi, m=self.n_pi*(self.m_1 + self.m_2), q=self.q_pi, beta=self.msis_beta, cost_model=COST_MODEL, estimator=False, rough=ROUGH)
+
+        self.soundness_error = self.q_min ** (-self.n_pi/2) + 2 / self.challenge_space_size + self.q_min ** (-2*self.l) + 2**(-self.msis[-2])
 
         ### Efficiency
 
         # CRS size
         ajtai_crs_size = self.d_pi * (self.m_1 + self.m_2) * (self.n_pi * ceil(log2(self.q_pi)))
-        bdlop_crs_size = ((2 if self.infARP else 1) * 256 / self.n_pi + self.l + 1 + 1) * self.m_2 * (self.n_pi * ceil(log2(self.q_pi)))
+        bdlop_crs_size = (256 / self.n_pi + self.l + 1 + 1) * self.m_2 * (self.n_pi * ceil(log2(self.q_pi)))
         self.crs_size  = ajtai_crs_size + bdlop_crs_size
 
         # Proof size
         self.size_z11 = ceil(self.n_pi * self.m_11 * (1/2 + log2(self.s_11)))
         self.size_z12 = ceil(self.n_pi * self.m_12 * (1/2 + log2(self.s_12)))
         self.size_z2 = ceil(self.n_pi * (self.m_2-(self.d_pi if self.D != 0 else 0)) * (1/2 + log2(self.s_2)))
-        self.size_z3_l2 = ceil(256 * (1/2 + log2(self.s_3_l2)))
-        self.size_z3_linf = ceil(256 * (1/2 + log2(self.s_3_linf)))
+        self.size_z3 = ceil(256 * (1/2 + log2(self.s_3)))
         self.size_c  = self.n_pi * ceil(log2(2 * self.rho + 1))
         self.size_tA = self.n_pi * self.d_pi * (ceil(log2(self.q_pi)) - self.D)
         self.size_hints = ceil(self.n_pi * self.d_pi * (2.25 if self.D != 0 else 0))
@@ -581,94 +602,92 @@ class ZKP_Parameters:
         self.incompressible_bitsize = self.size_tA + self.size_hints + self.size_tB + self.size_h + self.size_t1
 
         # Size of compressible elements (those Gaussians): 
-        self.compressible_bitsize = self.size_z11 + self.size_z12 + self.size_z2 + self.size_z3_l2 + (self.size_z3_linf if infARP else 0)
+        self.compressible_bitsize = self.size_z11 + self.size_z12 + self.size_z2 + self.size_z3 
 
         # Size of proof
         self.proof_bitsize = self.incompressible_bitsize + self.compressible_bitsize + self.size_c
     
     def __repr__(self):
         """
-        Printing a ZKP_Parameters object
+        Printing a Show_ZKP_Parameters object
         """
-        tmp = '\n[+] ZERO-KNOWLEDGE PROOF PARAMETERS\n'
-        tmp += 105 * '=' + '\n'
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Security parameter', 'λ', self.sec)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Subring degree of Z[X]/(X^n_π + 1)', 'n_π', self.n_pi)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Subring gap factor (n / n_π)', 'k_π', self.k_pi)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Subring gap factor (n_op / n_π)', 'k_{op,π}', self.k_op_pi)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Module rank', 'd_2', self.d_pi)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Smallest modulus factor', 'q_min', self.q_min)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Modulus', 'q_pi', self.q_pi)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Parameter for soundness amplification', 'l', self.l)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Dimension of witness', 'm_1', self.m_1)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Dimension of witness (first part)', 'm_11', self.m_11)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Dimension of witness (second part)', 'm_12', self.m_12)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Dimension of ABDLOP commitment randomness', 'm_2', self.m_2)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Infinity norm of commitment randomness', 'ξ', self.xi_s2)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Infinity norm of challenges', 'ρ', self.rho)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Manhattan-like norm of challenges', 'η', self.eta)
-        tmp += '| {:60s} | {:^15s} | 2^{:<18d} |\n'.format('Size of challenge space', '|C|', floor(log2(self.challenge_space_size)))        
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Compression parameter 1', 'gamma', self.gamma)
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('Compression parameter 2', 'D', self.D)        
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling repetition rate 11', 'M_11', self.M_11)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling repetition rate 12', 'M_12', self.M_12)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling repetition rate 2', 'M_2', self.M_2)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling repetition rate 3 (l2 ARP)', 'M_3_l2', self.M_3_l2)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling repetition rate 3 (linf ARP)', 'M_3_linf', self.M_3_linf) if self.infARP else ''
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Overall repetition rate', 'M', self.M_11*self.M_12*self.M_2*self.M_3_l2*(self.M_3_linf if self.infARP else 1))
-        tmp += '| {:60s} | {:^15s} | 2^{:<18d} |\n'.format('Rejection sampling loss 11', 'ε_11', 0 if self.eps_11 == 0 else int(log2(self.eps_11)))
-        tmp += '| {:60s} | {:^15s} | 2^{:<18d} |\n'.format('Rejection sampling loss 12', 'ε_12', 0 if self.eps_12 == 0 else int(log2(self.eps_12)))
-        tmp += '| {:60s} | {:^15s} | 2^{:<18d} |\n'.format('Rejection sampling loss 2', 'ε_2', 0 if self.eps_2 == 0 else int(log2(self.eps_2)))
-        tmp += '| {:60s} | {:^15s} | 2^{:<18d} |\n'.format('Rejection sampling loss 3 (l2)', 'ε_3_l2', 0 if self.eps_3_l2 == 0 else int(log2(self.eps_3_l2)))
-        tmp += '| {:60s} | {:^15s} | 2^{:<18d} |\n'.format('Rejection sampling loss 3 (linf)', 'ε_3_linf', 0 if self.eps_3_linf == 0 else int(log2(self.eps_3_linf))) if self.infARP else ''
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling slack 11', 'α_11', self.alpha_11)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling slack 12', 'α_12', self.alpha_12)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling slack 2', 'α_2', self.alpha_2)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling slack 3 (l2)', 'α_3_l2', self.alpha_3_l2)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Rejection sampling slack 3 (linf)', 'α_3_linf', self.alpha_3_linf) if self.infARP else ''
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Gaussian width for y_11', 'σ_11', self.s_11)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Gaussian width for y_12', 'σ_12', self.s_12)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Gaussian width for y_2', 'σ_2', self.s_2)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Gaussian width for y_3 (l2)', 'σ_3_l2', self.s_3_l2)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Gaussian width for y_3 (linf)', 'σ_3_linf', self.s_3_linf) if self.infARP else ''
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Euclidean norm bound on the witness 1', 'B1', self.bound_witness_1)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Euclidean norm bound on the witness 2', 'B2', self.bound_witness_2)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Euclidean norm bound on the witness', 'B', self.bound_witness)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Euclidean norm bound on the lifting quotient j', 'B_j', self.B_j)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Euclidean norm bound on the lifting quotient j_0', 'B_j_0', self.B_j_0)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Euclidean norm bound on the lifting quotient j_1/j_2', 'B_j_1', self.B_j_1)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Norm bound from approximate range proof (l2)', 'B_arp_l2', self.B_arp_l2)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Norm bound from approximate range proof (linf)', 'B_arp_linf', self.B_arp_linf) if self.infARP else ''
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('ARP bound condition 1: B_i^2', 'Cond. 1', floor(self.cond_1_bound))
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('ARP bound condition 2: B_arp^2 - B_i^2', 'Cond. 2', floor(self.cond_2_bound))
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('ARP bound condition 3: 41*n*m_1*B_arp', 'Cond. 3', floor(self.cond_3_bound))
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('ARP bound condition 4: for binary tag', 'Cond. 4', floor(self.cond_4_bound))
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('ARP bound condition 6: for mod-q lifting', 'j', floor(self.cond_j_bound))
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('ARP bound condition 7: for mod-p lifting (ct0)', 'j_0', floor(self.cond_j_0_bound))
-        tmp += '| {:60s} | {:^15s} | {:<20d} |\n'.format('ARP bound condition 7: for mod-p lifting (ct1/ct2)', 'j_1', floor(self.cond_j_1_bound))
-        tmp += '| {:60s} | {:^15s} | 2^{:<18.5f} |\n'.format('(Pre) Soundness error', 'δ_s', log2(self.pre_soundness_error))
+        tmp = '\n[+] SHOW ZERO-KNOWLEDGE PROOF PARAMETERS\n'
+        tmp += 110 * '=' + '\n'
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Soundness security parameter', 'λ_snd', self.snd_sec)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Zero-Knowledge security parameter', 'λ_zk', self.zk_sec)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Subring degree of Z[X]/(X^n + 1)', 'n', self.n_pi)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Subring gap factor (n / n_π)', 'k_π', self.k_pi)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Subring gap factor (n_op / n_π)', 'k_{op,π}', self.k_op_pi)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Module rank', 'd', self.d_pi)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Smallest modulus factor', 'q_min', self.q_min)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Modulus', 'q', self.q_pi)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Parameter for soundness amplification', 'l', self.l)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Dimension of witness', 'm_1', self.m_1)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Dimension of witness (first part)', 'm_11', self.m_11)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Dimension of witness (second part)', 'm_12', self.m_12)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Dimension of ABDLOP commitment randomness', 'm_2', self.m_2)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Infinity norm of commitment randomness', 'ξ', self.xi_s2)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Infinity norm of challenges', 'ρ', self.rho)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Manhattan-like norm of challenges', 'η', self.eta)
+        tmp += '| {:60s} | {:^15s} | 2^{:<23d} |\n'.format('Size of challenge space', '|C|', floor(log2(self.challenge_space_size)))        
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Compression parameter 1', 'gamma', self.gamma)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Compression parameter 2', 'D', self.D)        
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Rejection sampling repetition rate 11', 'M_11', self.M_11)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Rejection sampling repetition rate 12', 'M_12', self.M_12)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Rejection sampling repetition rate 2', 'M_2', self.M_2)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Rejection sampling repetition rate 3', 'M_3', self.M_3)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Overall repetition rate', 'M', self.M_11*self.M_12*self.M_2*self.M_3)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Rejection sampling slack 11', 'α_11', self.alpha_11)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Rejection sampling slack 12', 'α_12', self.alpha_12)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Rejection sampling slack 2', 'α_2', self.alpha_2)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Rejection sampling slack 3', 'α_3', self.alpha_3)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Gaussian width for y_11', 'σ_11', self.s_11)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Gaussian width for y_12', 'σ_12', self.s_12)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Gaussian width for y_2', 'σ_2', self.s_2)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Gaussian width for y_3', 'σ_3', self.s_3)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Euclidean norm bound on the witness 1', 'B1', self.bound_witness_1)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Euclidean norm bound on the witness 2', 'B2', self.bound_witness_2)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Euclidean norm bound on the witness', 'B', self.bound_witness)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Euclidean norm bound on the lifting quotient j', 'B_j', self.B_j)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Euclidean norm bound on the lifting quotient j_0', 'B_j_0', self.B_j_0)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Euclidean norm bound on the lifting quotient j_1/j_2', 'B_j_1', self.B_j_1)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Norm bound from approximate range proof', 'B_arp', self.B_arp)
+        ctr = 1
+        for key,value in self.modulus_conditions.items():
+            for i in range(len(value)):
+                tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Modulus condition (%s - %d)' % (key, i+1), 'Cond. %d' % (ctr), floor(value[i]))
+                ctr += 1
+        tmp += '| {:60s} | {:^15s} | 2^{:<23.5f} |\n'.format('Soundness error', 'δ_s', log2(self.soundness_error))
+        tmp += '\n[+] M-SIS and M-LWE hardness\n'
+        tmp += 110 * '=' + '\n'
+        tmp += '{:-^100s}'.format('Soundness (M-SIS)') + '\n'
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Euclidean norm bound on M-SIS solution', 'β', self.msis_beta)
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Required BKZ blocksize', 'BKZ-β', self.msis[2])
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Classical hardness bound (-log)', 'CSec', self.msis[-2])
+        tmp += '{:-^100s}'.format('Zero-Knowledge (M-LWE)') + '\n'
+        tmp += '| {:60s} | {:^15s} | {:<25d} |\n'.format('Required BKZ blocksize', 'BKZ-β', self.mlwe[0])
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Classical hardness bound (-log)', 'CSec', self.mlwe[-2])
         tmp += '\n[+] Proof Estimated Performance (KB)\n'
-        tmp += 105 * '=' + '\n'
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Common Random String (KB)', '|crs|', self.crs_size / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Incompressible elements (KB)', '|π_1|', self.incompressible_bitsize / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Compressible elements (KB)', '|π_2|', self.compressible_bitsize / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Challenge (KB)', '|π_3|', self.size_c / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Total proof bitsize (KB)', '|π|', self.proof_bitsize / 2 ** 13.)
-        tmp += 105 * '=' + '\n'
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of z11 (KB)', '|z_11|', self.size_z11 / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of z12 (KB)', '|z_12|', self.size_z12 / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of z11,z12 (KB)', '|z_1|', (self.size_z11 + self.size_z12) / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of z2 (KB)', '|z_2|', self.size_z2 / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of z3_l2 (KB)', '|z_3_l2|', self.size_z3_l2 / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of z3_linf (KB)', '|z_3_linf|', self.size_z3_linf / 2 ** 13.) if self.infARP else ''
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of c (KB)', '|c|', self.size_c / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of tA (KB)', '|tA|', self.size_tA / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of compression hints (KB)', '|hints|', self.size_hints / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of tB (KB)', '|tB|', self.size_tB / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of h (KB)', '|h|', self.size_h / 2 ** 13.)
-        tmp += '| {:60s} | {:^15s} | {:<20.5f} |\n'.format('Size of t1 (KB)', '|t1|', self.size_t1 / 2 ** 13.)
+        tmp += 110 * '=' + '\n'
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Common Random String (KB)', '|crs|', self.crs_size / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Incompressible elements (KB)', '|π_1|', self.incompressible_bitsize / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Compressible elements (KB)', '|π_2|', self.compressible_bitsize / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Challenge (KB)', '|π_3|', self.size_c / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Total proof bitsize (KB)', '|π|', self.proof_bitsize / 2 ** 13.)
+        tmp += 110 * '=' + '\n'
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of z11 (KB)', '|z_11|', self.size_z11 / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of z12 (KB)', '|z_12|', self.size_z12 / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of z11,z12 (KB)', '|z_1|', (self.size_z11 + self.size_z12) / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of z2 (KB)', '|z_2|', self.size_z2 / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of z3 (KB)', '|z_3|', self.size_z3 / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of c (KB)', '|c|', self.size_c / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of tA (KB)', '|tA|', self.size_tA / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of compression hints (KB)', '|hints|', self.size_hints / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of tB (KB)', '|tB|', self.size_tB / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of h (KB)', '|h|', self.size_h / 2 ** 13.)
+        tmp += '| {:60s} | {:^15s} | {:<25.5f} |\n'.format('Size of t1 (KB)', '|t1|', self.size_t1 / 2 ** 13.)
 
-        return tmp
+        return tmp     
 
 def estimate_group_signature(samp, pke, zkp, no_guessing=False, CCA=True):
     """
@@ -724,9 +743,9 @@ def estimate_group_signature(samp, pke, zkp, no_guessing=False, CCA=True):
     risis = estimate_ISIS(n=samp.n, m=samp.n*(samp.k_H + 2), q=samp.q, beta=samp.B, cost_model=COST_MODEL, estimator=False, rough=ROUGH)
 
     ## ZKP assumptions
-    mlwe_zk = estimate_LWE(n=zkp.n_pi * (zkp.m_2 - (zkp.d_pi + floor(256/zkp.n_pi) + (floor(256/zkp.n_pi) if zkp.infARP else 0) + zkp.l + 1)), q=zkp.q_pi, Xs=ND.CenteredBinomial(zkp.xi_s2), Xe=ND.CenteredBinomial(zkp.xi_s2), m=zkp.n_pi * zkp.m_2, cost_model=COST_MODEL, rough=ROUGH)
+    mlwe_zk = zkp.mlwe #estimate_LWE(n=zkp.n_pi * (zkp.m_2 - (zkp.d_pi + floor(256/zkp.n_pi) + (floor(256/zkp.n_pi) if zkp.infARP else 0) + zkp.l + 1)), q=zkp.q_pi, Xs=ND.CenteredBinomial(zkp.xi_s2), Xe=ND.CenteredBinomial(zkp.xi_s2), m=zkp.n_pi * zkp.m_2, cost_model=COST_MODEL, rough=ROUGH)
     
-    msis_zk = estimate_SIS(n=zkp.n_pi * zkp.d_pi, m=zkp.n_pi * (zkp.m_1 + zkp.m_2), q=zkp.q_pi, beta=zkp.msis_beta, cost_model=COST_MODEL, estimator=False, rough=ROUGH)
+    msis_zk = zkp.msis #estimate_SIS(n=zkp.n_pi * zkp.d_pi, m=zkp.n_pi * (zkp.m_1 + zkp.m_2), q=zkp.q_pi, beta=zkp.msis_beta, cost_model=COST_MODEL, estimator=False, rough=ROUGH)
     print("[+] END LOG [+]\n")
 
     # Print hardness
@@ -750,8 +769,6 @@ def estimate_group_signature(samp, pke, zkp, no_guessing=False, CCA=True):
         e_mlwe_for_matrix_hint = hardness_bound(mlwe_for_matrix_hint)
         e_mhmlwe      = e_mlwe_for_matrix_hint + pke.eps_op/(1 - pke.eps_op)
         print("\t[o] Hardness of MH-M-LWE                  \t >> Csec: %.3f" % (-log2(e_mhmlwe)))
-    else:
-        e_mhmlwe      = 2**(-200)
     e_ntru          = hardness_bound(ntru)
     e_risis         = hardness_bound(risis)
     e_tntruisis     = samp.k_H * e_ntru + e_risis
@@ -759,8 +776,8 @@ def estimate_group_signature(samp, pke, zkp, no_guessing=False, CCA=True):
     e_mlwe_zk       = hardness_bound(mlwe_zk)
     e_msis_zk       = hardness_bound(msis_zk)
 
-    e_snd = zkp.pre_soundness_error + e_msis_zk
-    e_zk = zkp.eps_11/zkp.M_11 + zkp.eps_12/zkp.M_12 + zkp.eps_2/zkp.M_2 + zkp.eps_3_l2/zkp.M_3_l2 + (zkp.eps_3_linf/zkp.M_3_linf if zkp.infARP else 0) + e_mlwe_zk
+    e_snd = zkp.soundness_error
+    e_zk = zkp.eps_11/zkp.M_11 + zkp.eps_12/zkp.M_12 + zkp.eps_2/zkp.M_2 + zkp.eps_3/zkp.M_3 + e_mlwe_zk
 
     # Computing loss factors
     a = 1 - 1/(2 * samp.sec)
@@ -793,22 +810,15 @@ def estimate_group_signature(samp, pke, zkp, no_guessing=False, CCA=True):
     print(tmp)
 
 ROUGH            = False
-ZK_OPTIMIZATIONS = True
-CCA_version      = True
+CCA_version      = False
 
 if CCA_version:
     samp_pms = NTRUSampler_Parameters(target_bitsec=128, n=1024, n_pi=64, b_H=13, k_H=2, q_L=733, N_min=2**32)
     pke_pms = CCA_PKE_Parameters(target_bitsec=128, n_op=256, d=3)
-    # ZKP with ARP only in L2 norm
-    zkp_pms = ZKP_Parameters(target_bitsec=128, n_pi=64, d_pi=16, m_2=78, q_start=round(2**(68.31)), gamma=2**26, D=18, samp=samp_pms, pke=pke_pms, bimodal=ZK_OPTIMIZATIONS, compression=ZK_OPTIMIZATIONS, garbage=ZK_OPTIMIZATIONS, CCA=CCA_version, infARP=False)
-    # ZKP with ARP in both L2 and Linf norms
-    # zkp_pms = ZKP_Parameters(target_bitsec=128, n_pi=64, d_pi=20, m_2=75, q_start=round(2**(52.51)), gamma=2**24, D=16, samp=samp_pms, pke=pke_pms, bimodal=ZK_OPTIMIZATIONS, compression=ZK_OPTIMIZATIONS, garbage=ZK_OPTIMIZATIONS, CCA=CCA_version, infARP=True)
+    zkp_pms = ZKP_AUTO_Parameters(snd_sec=128, zk_sec=161, n_pi=64, samp=samp_pms, pke=pke_pms, CCA=CCA_version)
 else:
     samp_pms = NTRUSampler_Parameters(target_bitsec=128, n=1024, n_pi=64, b_H=13, k_H=2, q_L=733, N_min=2**32)
     pke_pms = CPA_PKE_Parameters(target_bitsec=128, n_op=256, d=3)
-    # ZKP with ARP only in L2 norm
-    # zkp_pms = ZKP_Parameters(target_bitsec=128, n_pi=64, d_pi=16, m_2=78, q_start=round(2**(68.31)), gamma=2**26, D=18, samp=samp_pms, pke=pke_pms, bimodal=ZK_OPTIMIZATIONS, compression=ZK_OPTIMIZATIONS, garbage=ZK_OPTIMIZATIONS, CCA=CCA_version, infARP=False)
-    # ZKP with ARP in both L2 and Linf norms
-    zkp_pms = ZKP_Parameters(target_bitsec=128, n_pi=64, d_pi=20, m_2=75, q_start=round(2**(52.51)), gamma=2**24, D=16, samp=samp_pms, pke=pke_pms, bimodal=ZK_OPTIMIZATIONS, compression=ZK_OPTIMIZATIONS, garbage=ZK_OPTIMIZATIONS, CCA=CCA_version, infARP=True)
+    zkp_pms = ZKP_AUTO_Parameters(snd_sec=128, zk_sec=161, n_pi=64, samp=samp_pms, pke=pke_pms, CCA=CCA_version)
 
 estimate_group_signature(samp_pms, pke_pms, zkp_pms, no_guessing=True, CCA=CCA_version)
